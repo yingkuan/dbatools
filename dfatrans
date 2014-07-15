@@ -1,0 +1,56 @@
+#!/bin/bash
+export NETFLIX_HOME=gs://dfaloading
+export LOG="/home/ubuntu/log/dfatrans_`date +%m%d%y`.log"
+export DFA_HOME=/home/ubuntu/dfa/bin
+export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin
+export LOAD_LOG="/home/ubuntu/log/loadlog_`date +%m%d%y`.log"
+
+starttime=`date -u --date='5 minutes ago' +%Y-%m-%dT%H:%M:%SZ`
+endtime=`date -u +%Y-%m-%dT%H:%M:%SZ`
+loaddate=`date -u +%Y-%m-%d`
+
+function checktype()
+{
+        if [[ $1 =~ 'NetworkMatchtables' ]]
+        then
+         echo "$1 is Match Table"
+        elif [[ $1 =~ 'NetworkActivity' ]]
+        then
+         echo "$1 is Activity"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_activity $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        elif [[ $1 =~ 'NetworkClick' ]]
+        then
+         echo "$1 is Click File"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_click $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        elif [[ $1 =~ 'NetworkImpress' ]]
+        then
+         echo "$1 is Impression"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_impression $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        else
+         echo "$1 unknown type"
+        fi
+}
+
+echo "START: $starttime" >> $LOG
+for INSTANCE in `cat $DFA_HOME/dfa_gs`
+do
+        export SOURCE_GS=${INSTANCE/*|}
+	export REGION=${INSTANCE/|*}
+	echo "Working on $REGION"
+	echo "Working on $REGION" >>$LOG
+	gsutil ls $SOURCE_GS/*log.gz|awk -F '/' '{print $4}'> $DFA_HOME/currlist$REGION
+	gsutil ls $NETFLIX_HOME/$REGION/*log.gz|awk -F '/' '{print $5}' >$DFA_HOME/exlist$REGION
+	comm --nocheck-order -23 $DFA_HOME/currlist$REGION $DFA_HOME/exlist$REGION > $DFA_HOME/loadlist$REGION
+	for FILE in `cat $DFA_HOME/loadlist$REGION`
+		do
+	  	gsutil cp $SOURCE_GS/$FILE $NETFLIX_HOME/$REGION >> $LOG
+		checktype $FILE
+	done
+done
+
+echo "END: $endtime" >> $LOG
+exit
+

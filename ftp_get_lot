@@ -1,0 +1,118 @@
+#!/usr/bin/expect -f
+# get IAS data from SFTP
+
+exp_version -exit 5.0
+set arc [llength $argv]
+set IAS_USER "NetflixSFTP"
+set IAS_PASSWORD "Tuesday0256!@"
+set YYYYMM [exec /bin/date "+%Y%m"]
+set YYYYMMDD [exec /bin/date "+%Y%m%d"]
+set DATA_ROOT "/home/ubuntu/dfa/staging/IAS/"
+set IAS_HOST "cxportal.integralads.com"
+#set DEST_DIR "$DATA_ROOT/$YYYYMM"
+
+proc f_abort {msg} {
+  expect *
+  puts "ERROR: $msg\n\t--$expect_out(buffer)--"
+  exit 1
+}
+
+proc put_files {lotfiles} {
+  foreach file $lotfiles {
+        puts "Ftp file $file"
+        send "put $file\r"
+        expect {
+           timeout {f_abort "Timeout to put $file"}
+           "sftp>*"
+        }
+  }
+}
+
+proc get_files {lotfiles} {
+  foreach file $lotfiles {
+        puts "Ftp get file $file"
+        send "get $file\r"
+        expect {
+           timeout {f_abort "Timeout to get $file"}
+           "sftp>*"
+        }
+  }
+}
+
+proc get_list {} {
+  global DATA_ROOT
+  set list $DATA_ROOT/getlist
+  if { [file exists $list] } {
+    set fp [open "$list" r]
+    while {[gets $fp line] != -1} {
+      set filename [lindex $line [expr [llength $line] - 1]]
+      lappend lotfiles $filename
+    }
+    close $fp
+  }
+
+  if { [info exists lotfiles] && [llength $lotfiles] > 0 } {
+    return $lotfiles
+  }
+  return
+}
+
+proc savelist {} {
+  global DATA_ROOT
+  send "ls -ltr *dat.gz\r"
+  expect {
+    timeout { f_abort "Timeout from ls *dat.gz"}
+    "/*No such*" { f_abort "cd failed for ls *dat.gz"}
+    "sftp>*"
+  }
+  set filename "$DATA_ROOT/ls-output"
+  set fd [open $filename "w"]
+  puts $fd $expect_out(buffer)
+  close $fd
+  puts "List saved $DATA_ROOT/ls-output\r"
+}
+
+proc ftp_login {} {
+  global IAS_USER IAS_PASSWORD DATA_ROOT IAS_HOST
+  expect {
+    timeout { f_abort "Timeout No password prompt from $RELAY_HOST"}
+    -nocase "password:"
+  }
+  send "$IAS_PASSWORD\r"
+  expect {
+    timeout { f_abort "Timeout from $IAS_USER"}
+    "530*ftp>*" { f_abort "Login incorrect check password for $IAS_USER"}
+    "sftp>*"
+  }
+  send "lcd $DATA_ROOT\r"
+  expect {
+    timeout { f_abort "Timeout from lcd $DATA_ROOT"}
+    "/*No such*" { f_abort "Local cd failed for $DATA_ROOT"}
+    "sftp>*"
+  }
+  send "cd outbound\r"
+  expect {
+    timeout { f_abort "Timeout from cd outbound"}
+    "/*No such*" { f_abort "cd failed for outbound"}
+    "sftp>*"
+  }
+  puts "FTP login done\r"
+}
+
+log_user 0
+set timeout 2000
+
+spawn /usr/bin/sftp "$IAS_USER@$IAS_HOST"
+match_max 1000000
+ftp_login
+savelist
+send "bye\n"
+spawn sh "/home/ubuntu/dfa/bin/getlist"
+expect eof
+
+spawn /usr/bin/sftp "$IAS_USER@$IAS_HOST"
+match_max 1000000
+ftp_login
+set lotfiles [ get_list ]
+get_files $lotfiles
+send "bye\n"

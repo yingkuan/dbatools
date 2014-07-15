@@ -1,0 +1,7 @@
+#!/bin/sh
+export DATA_ROOT="/home/ubuntu/dfa/staging/IAS"
+grep -v ls $DATA_ROOT/ls-output|grep dat.gz  |awk -F' ' '{print $9}'|sort > $DATA_ROOT/newlist
+dos2unix $DATA_ROOT/newlist
+ls -ltr $DATA_ROOT > $DATA_ROOT/ls-local
+grep dat.gz $DATA_ROOT/ls-local|awk -F' ' '{print $9}'|sort > $DATA_ROOT/oldlist
+comm -32 $DATA_ROOT/newlist $DATA_ROOT/oldlist > $DATA_ROOT/getlist
