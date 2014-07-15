@@ -30,12 +30,14 @@ do
          echo “ERROR: Failed to upload C$FILE”
          mail -s "ERROR: Failed to upload C$FILE to GCS" yliu@netflix.com < $ERRLOG
 	else
-	  rm -f "$STAGE/C$FILE" >> $LOG
+#	  rm -f "$STAGE/C$FILE" >> $LOG
 	  echo "Loading C$FILE" >> $LOG
-	  bq load --max_bad_records=100 netflix.com:nfcompute:IAS.IAS_1 $NETFLIX_HOME/IAS/C$FILE $schema 
+          export JOB_ID=`echo C$FILE|sed 's/\.//g'`
+	  bq load --job_id=$JOB_ID --max_bad_records=100 netflix.com:nfcompute:IAS.IAS_1 $NETFLIX_HOME/IAS/C$FILE $schema 
 	  if [ $? -ne 0 ]; then
  	   echo “ERROR: Failed to load C$FILE”
- 	   mail -s "ERROR: Failed to load IAS file C$FILE" yliu@netflix.com < $LOG
+	   bq show --j $JOB_ID > $ERRLOG
+ 	   mail -s "ERROR: Failed to load IAS file C$FILE" yliu@netflix.com < $ERRLOG
 	  fi
         fi
 done
