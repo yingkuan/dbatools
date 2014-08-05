@@ -1,9 +1,15 @@
 #!/bin/bash
+# Main script loading DCM DT data
 export NETFLIX_HOME=gs://dfaloading
 export LOG="/home/ubuntu/log/dfatrans_`date +%m%d%y`.log"
 export DFA_HOME=/home/ubuntu/dfa/bin
-export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin
+export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin:/usr/local/bin
 export LOAD_LOG="/home/ubuntu/log/loadlog_`date +%m%d%y`.log"
+export ERRLOG="/home/ubuntu/log/DCMerr.log"
+export STAGING="/dfa/staging/DCM"
+export CREATIVE_SCHEMA="Advertiser_ID:INTEGER,Creative_ID:INTEGER,UI_Creative_ID:INTEGER,Creative,Last_Modified_Date,Creative_Type,Creative_Sub_Type,Creative_Size_ID,Image_URL,Creative_Version"
+export CAMPAIGN_SCHEMA="Advertiser_ID:integer,Buy_ID:integer,Buy,Start_Date,End_Date,Creative_Library_Enabled,Billing_Invoice_Code"
+export PAGE_SCHMEA="Buy_ID:integer,Site_ID:integer,Page_ID:integer,Page,Site_Placement,Content_Category,Strategy,Start_Date,End_Date,Group_Type,Group_Parent_ID:integer,Pricing_Type,Cap_Cost,Purchase_Quantity,Purchase_Cost,Flighting_Activated,CPA_Activity_ID:integer"
 
 starttime=`date -u --date='5 minutes ago' +%Y-%m-%dT%H:%M:%SZ`
 endtime=`date -u +%Y-%m-%dT%H:%M:%SZ`
@@ -11,23 +17,68 @@ loaddate=`date -u +%Y-%m-%d`
 
 function checktype()
 {
-        if [[ $1 =~ 'NetworkMatchtables' ]]
+        export JOB_ID=`echo $1|sed 's/\.//g'`
+	if [[ $1 =~ 'NetworkMatchtablesActivity' ]] && [[ $1 =~ '_creative.log.gz' ]]
+	then
+	 echo "$1 is Creative File"
+	 gsutil cp $NETFLIX_HOME/$REGION/$1 $STAGING/$1
+	 zcat $STAGING/$1 |csvformat -d þ > $STAGING/$1.csv
+	 gsutil cp $STAGING/$1.csv $NETFLIX_HOME/$REGION
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 netflix.com:nfcompute:DCM.dfa_creative_stage $NETFLIX_HOME/$REGION/$1.csv $CREATIVE_SCHEMA
+         if [ $? -ne 0 ]; then
+           echo “ERROR: Failed to load $1”
+           bq show --j $JOB_ID > $ERRLOG
+           mail -s "ERROR: Failed to load DCM file $1" yliu@netflix.com < $ERRLOG
+         fi
+	elif [[ $1 =~ 'NetworkMatchtablesActivity' ]] && [[ $1 =~ '_campaign.log.gz' ]]
+	then
+         echo "$1 is Campaign File"
+         gsutil cp $NETFLIX_HOME/$REGION/$1 $STAGING/$1
+         zcat $STAGING/$1 |csvformat -d þ > $STAGING/$1.csv
+         gsutil cp $STAGING/$1.csv $NETFLIX_HOME/$REGION
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 netflix.com:nfcompute:DCM.dfa_campaign_stage $NETFLIX_HOME/$REGION/$1.csv $CAMPAIGN_SCHEMA
+         if [ $? -ne 0 ]; then
+           echo “ERROR: Failed to load $1”
+           bq show --j $JOB_ID > $ERRLOG
+           mail -s "ERROR: Failed to load DCM file $1" yliu@netflix.com < $ERRLOG
+         fi
+        elif [[ $1 =~ 'NetworkMatchtablesActivity' ]] && [[ $1 =~ '_page.log.gz' ]]
+        then
+         echo "$1 is Page File"
+         gsutil cp $NETFLIX_HOME/$REGION/$1 $STAGING/$1
+         zcat $STAGING/$1 |csvformat -d þ > $STAGING/$1.csv
+         gsutil cp $STAGING/$1.csv $NETFLIX_HOME/$REGION
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 netflix.com:nfcompute:DCM.dfa_page_stage $NETFLIX_HOME/$REGION/$1.csv $PAGE_SCHEMA
+         if [ $? -ne 0 ]; then
+           echo “ERROR: Failed to load $1”
+           bq show --j $JOB_ID > $ERRLOG
+           mail -s "ERROR: Failed to load DCM file $1" yliu@netflix.com < $ERRLOG
+         fi
+        elif [[ $1 =~ 'NetworkMatchtables' ]]
         then
          echo "$1 is Match Table"
         elif [[ $1 =~ 'NetworkActivity' ]]
         then
          echo "$1 is Activity"
-         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_activity $NETFLIX_HOME/$REGION/$1
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_activity $NETFLIX_HOME/$REGION/$1
+	 if [ $? -ne 0 ]; then
+ 	   echo “ERROR: Failed to load $1”
+	   bq show --j $JOB_ID > $ERRLOG
+ 	   mail -s "ERROR: Failed to load DCM file $1" yliu@netflix.com < $ERRLOG
+	 fi
+	 bq show --j $JOB_ID >> $LOG
          echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
         elif [[ $1 =~ 'NetworkClick' ]]
         then
          echo "$1 is Click File"
-         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_click $NETFLIX_HOME/$REGION/$1
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_click $NETFLIX_HOME/$REGION/$1
+	 bq show --j $JOB_ID >> $LOG
          echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
         elif [[ $1 =~ 'NetworkImpress' ]]
         then
          echo "$1 is Impression"
-         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_impression $NETFLIX_HOME/$REGION/$1
+         bq load --job_id=$JOB_ID --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_impression $NETFLIX_HOME/$REGION/$1
+	 bq show --j $JOB_ID >> $LOG
          echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
         else
          echo "$1 unknown type"
@@ -35,6 +86,14 @@ function checktype()
 }
 
 echo "START: $starttime" >> $LOG
+echo " Backup and cleanup old Dim tables" >> $LOG
+ bq cp -f netflix.com:nfcompute:DCM.dfa_creative netflix.com:nfcompute:DCM.dfa_creative_save
+ bq cp -f netflix.com:nfcompute:DCM.dfa_campaign netflix.com:nfcompute:DCM.dfa_campaign_save
+ bq cp -f netflix.com:nfcompute:DCM.dfa_page netflix.com:nfcompute:DCM.dfa_page_save
+ bq rm -f netflix.com:nfcompute:DCM.dfa_creative_stage
+ bq rm -f netflix.com:nfcompute:DCM.dfa_campaign_stage
+ bq rm -f netflix.com:nfcompute:DCM.dfa_page_stage
+
 for INSTANCE in `cat $DFA_HOME/dfa_gs`
 do
         export SOURCE_GS=${INSTANCE/*|}
@@ -50,6 +109,11 @@ do
 		checktype $FILE
 	done
 done
+
+echo "Rename newly loaded dimension tables"
+ bq cp -f netflix.com:nfcompute:DCM.dfa_creative_stage netflix.com:nfcompute:DCM.dfa_creative
+ bq cp -f netflix.com:nfcompute:DCM.dfa_campaign_stage netflix.com:nfcompute:DCM.dfa_campaign
+ bq cp -f netflix.com:nfcompute:DCM.dfa_page_stage netflix.com:nfcompute:DCM.dfa_page
 
 echo "END: $endtime" >> $LOG
 exit
