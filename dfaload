@@ -1,0 +1,61 @@
+#!/bin/bash
+# Loading into Big Query tables
+export NETFLIX_HOME=gs://dfaloading
+export LOG="/home/ubuntu/log/dfaload_`date +%m%d%y`.log"
+export DFA_HOME=/home/ubuntu/dfa/bin
+export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin
+export STAGE="/home/ubuntu/dfa/staging"
+
+starttime=`date -u --date='5 minutes ago' +%Y-%m-%dT%H:%M:%SZ`
+endtime=`date -u +%Y-%m-%dT%H:%M:%SZ`
+loaddate=`date -u +%Y-%m-%d`
+
+function checktype()
+{
+	if [[ $1 =~ 'NetworkMatchtables' ]]
+	then
+	 echo "$1 is Match Table"
+	elif [[ $1 =~ 'NetworkActivity' ]]
+	then
+	 echo "$1 is Activity"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_activity $NETFLIX_HOME/$REGION/$1
+	 echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}"
+	elif [[ $1 =~ 'NetworkClick' ]]
+	then
+	 echo "$1 is Click File"
+	 bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_click $NETFLIX_HOME/$REGION/$1
+	 echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}"
+	elif [[ $1 =~ 'NetworkImpress' ]]
+	then
+	 echo "$1 is Impression"
+	 bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_impression $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}"
+	else
+	 echo "$1 unknown type"
+	fi
+}
+
+echo "START: $starttime" >> $LOG
+for INSTANCE in `cat $DFA_HOME/dfa_gs.test`
+do
+        export SOURCE_GS=${INSTANCE/*|}
+	export REGION=${INSTANCE/|*}
+	echo "Working on $REGION"
+	echo "Working on $REGION" >>$LOG
+	for FILE in `cat $DFA_HOME/testloadlist$REGION`
+		do
+		 export sql="SELECT count(1) count FROM [DCM.DFA_LOADING] where filename='$FILE'"
+	  	 bq --format json query "$sql"
+		 export CC=`bq --format json query "$sql" |awk -F':'  '{print $2}' |awk -F'"' '{print $2}'`
+		if [ $CC == 0 ]
+		then
+			echo "====Loading $FILE ....."
+			checktype $FILE
+			#gsutil cp $NETFLIX_HOME/$REGION/$FILE $STAGE
+		fi
+	done
+done
+
+echo "END: $endtime" >> $LOG
+exit
+

@@ -1,0 +1,44 @@
+#!/bin/sh
+# Load IAS for Ad Tech team
+# . FTP from client site
+# . Convert into CSV format
+# . load into Bigquery netflix.com:nfcompute:DCM.IAS
+
+export NETFLIX_HOME=gs://dfaloading
+export LOG="/home/ubuntu/log/IASload`date +%m%d%y`.log"
+export ERRLOG="/home/ubuntu/log/IASerr.log"
+export DFA_HOME=/home/ubuntu/dfa/bin
+export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin:/usr/local/bin
+export STAGE="/dfa/staging/IAS"
+
+export schema="dateReceived:TIMESTAMP,timeReceived,ipAddress,userAgentStr,browser,os,platform,host,country,state,dma,adultSc,alcoholSc,downloadSc,drugSc,hateSc,offensiveLanguageSc,iabCategories,extAdnetworkId,extAdvertiserId,extCampaignId,extPlanId,extPublisherId,extChannelId,extPlacementId,extImpId,inView1s,inView5s,inView15s,inViewTime,viewabilityEnum,sadScore,confidence,noViewabilityReason,traqBucket,inVideoSample,adSize,mediaType,videoNeverStarted,videoInView,video1qCompleted,video1qInView,video2qCompleted,video2qInView,video3qCompleted,video3qInView,video4qCompleted,video4qInView,videoMuted"
+
+$DFA_HOME/ftp_get_lot >> $LOG
+if [ $? -ne 0 ]; then
+ echo “ERROR: Failed to FTP files from IAS”
+ mail -s "ERROR: Failed to FTP files from IAS" yliu@netflix.com < $LOG
+ exit 1
+fi
+
+for FILE in `cat $STAGE/getlist`
+do
+	echo "Converting $FILE and remove null" >>$LOG
+	zcat $STAGE/$FILE |csvformat -d '\001'|sed -e 's/\"null\"/\"\"/g'|gzip > $STAGE/C$FILE 
+	echo "Uploading $STAGE/C$FILE" >>$LOG
+	gsutil cp "$STAGE/C$FILE" "$NETFLIX_HOME/IAS"  > $ERRLOG
+        if [ $? -ne 0 ]; then
+         echo “ERROR: Failed to upload C$FILE”
+         mail -s "ERROR: Failed to upload C$FILE to GCS" yliu@netflix.com < $ERRLOG
+	else
+#	  rm -f "$STAGE/C$FILE" >> $LOG
+	  echo "Loading C$FILE" >> $LOG
+          export JOB_ID=`echo C$FILE|sed 's/\.//g'`
+	  bq load --job_id=$JOB_ID --max_bad_records=100 netflix.com:nfcompute:IAS.IAS_ST $NETFLIX_HOME/IAS/C$FILE $schema 
+	  #bq load --max_bad_records=100 netflix.com:nfcompute:IAS.IAS_ST $NETFLIX_HOME/IAS/C$FILE $schema 
+	  if [ $? -ne 0 ]; then
+ 	   echo “ERROR: Failed to load C$FILE”
+	   bq show --j $JOB_ID > $ERRLOG
+ 	   mail -s "ERROR: Failed to load IAS file C$FILE" yliu@netflix.com < $ERRLOG
+	  fi
+        fi
+done

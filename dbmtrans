@@ -1,0 +1,60 @@
+#!/bin/bash
+export NETFLIX_HOME=gs://dfaloading
+export SOURCE_GS="gs://gdbm-348979-351450/log"
+export LOG="/home/ubuntu/log/dbmtrans_`date +%m%d%y`.log"
+export DFA_HOME=/home/ubuntu/dfa/bin
+export PATH=$PATH:/home/ubuntu/google-cloud-sdk/bin
+export LOAD_LOG="/home/ubuntu/log/dbmloadlog_`date +%m%d%y`.log"
+export STAGING="/home/ubuntu/dfa/staging/DBM"
+
+starttime=`date -u --date='5 minutes ago' +%Y-%m-%dT%H:%M:%SZ`
+endtime=`date -u +%Y-%m-%dT%H:%M:%SZ`
+loaddate=`date -u +%Y-%m-%d`
+
+function checktype()
+{
+        if [[ $1 =~ 'NetworkMatchtables' ]]
+        then
+         echo "$1 is Match Table"
+        elif [[ $1 =~ 'NetworkActivity' ]]
+        then
+         echo "$1 is Activity"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_activity $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        elif [[ $1 =~ 'NetworkClick' ]]
+        then
+         echo "$1 is Click File"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_click $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        elif [[ $1 =~ 'NetworkImpress' ]]
+        then
+         echo "$1 is Impression"
+         bq load --skip_leading_rows=1 -F þ netflix.com:nfcompute:DCM.dfa_impression $NETFLIX_HOME/$REGION/$1
+         echo "{loaddate:$loaddate,region:$REGION,filedate:null,filename:$FILE}" >> $LOAD_LOG
+        else
+         echo "$1 unknown type"
+        fi
+}
+
+echo "START: $starttime" >> $LOG
+gsutil ls gs://gdbm-348979-351450/log/*view*csv |awk -F '/' '{print $5}' > $DFA_HOME/currDBM
+gsutil ls gs://gdbm-348979-351450/log/*click*csv |awk -F '/' '{print $5}' >> $DFA_HOME/currDBM
+gsutil ls gs://gdbm-348979-351450/log/*conversion*csv |awk -F '/' '{print $5}' >> $DFA_HOME/currDBM
+cat $DFA_HOME/currDBM |sort > $DFA_HOME/currDBMs
+gsutil ls $NETFLIX_HOME/DBM/*csv|awk -F '/' '{print $5}' |sort >$DFA_HOME/extDBM
+comm --nocheck-order -23 $DFA_HOME/currDBMs $DFA_HOME/extDBM > $DFA_HOME/loadlistDBM
+for FILE in `cat $DFA_HOME/loadlistDBM`
+	do
+ 	#gsutil cp $SOURCE_GS/$FILE $NETFLIX_HOME/$REGION >> $LOG
+# 	echo "gsutil cp $SOURCE_GS/$FILE $NETFLIX_HOME/DBM "
+ 	gsutil cp $SOURCE_GS/$FILE $STAGING 
+	echo "Converting timestamp format $FILE"
+	cat $STAGING/$FILE | gawk -F , 'BEGIN {FS=",";OFS=",";} {eventtime = $4;viewtime=$5;requesttime=$6; $4 = substr(eventtime,0,10); $5 = substr(viewtime,0,10); $6 = substr(requesttime,0,10);} { print }' > $STAGING/C$FILE
+	echo "Copy to GCS $FILE"
+	gsutil cp $STAGING/C$FILE $NETFLIX_HOME/DBM/$FILE 
+	$DFA_HOME/dbmload $NETFLIX_HOME/DBM/$FILE
+done
+
+echo "END: $endtime" >> $LOG
+exit
+
